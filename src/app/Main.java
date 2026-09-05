@@ -10,6 +10,7 @@ import service.BillingService;
 import java.util.Scanner;
 import java.util.ArrayList;
 import java.util.List;
+import app.WebServer;
 
 public class Main {
 
@@ -56,6 +57,14 @@ public class Main {
         AppointmentRepository repository = new AppointmentRepository();
         AppointmentService appointmentService = new AppointmentService(repository);
         BillingService billingService = new BillingService();
+
+        // Start the web service so appointments can be accessed via REST/HTTP
+        try {
+            WebServer webServer = new WebServer(appointmentService);
+            webServer.start();
+        } catch (java.io.IOException e) {
+            System.out.println("Could not start web service: " + e.getMessage());
+        }
 
         // --- MAIN MENU LOOP ---
         boolean running = true;
