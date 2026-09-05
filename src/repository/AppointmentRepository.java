@@ -2,56 +2,99 @@ package repository;
 
 import model.Appointment;
 import model.Patient;
-import java.io.*;
+import java.sql.*;
 import java.util.*;
 
 public class AppointmentRepository {
 
-    private static final String FILE_NAME = "appointments.txt";
+    private static final String DB_URL = "jdbc:sqlite:clinic.db";
 
-    // Save one appointment by appending it to the file
+    public AppointmentRepository() {
+        createTableIfNotExists();
+    }
+
+    private Connection connect() throws SQLException {
+        return DriverManager.getConnection(DB_URL);
+    }
+
+    // Creates the appointments table the first time the app runs
+    private void createTableIfNotExists() {
+            try {
+        Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+        System.out.println("Driver class not found: " + e.getMessage());
+        }
+        String sql = "CREATE TABLE IF NOT EXISTS appointments (" +
+                "appointment_number TEXT PRIMARY KEY," +
+                "patient_name TEXT NOT NULL," +
+                "address TEXT NOT NULL," +
+                "contact_number TEXT NOT NULL," +
+                "dentist_name TEXT NOT NULL," +
+                "treatment_type TEXT NOT NULL," +
+                "appointment_date TEXT NOT NULL," +
+                "appointment_time TEXT NOT NULL" +
+                ")";
+
+        try (Connection conn = connect();
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(sql);
+        } catch (SQLException e) {
+            System.out.println("Error creating table: " + e.getMessage());
+        }
+    }
+
+    // Save one appointment into the database
     public void save(Appointment appointment) {
-        try (FileWriter fw = new FileWriter(FILE_NAME, true);
-             BufferedWriter bw = new BufferedWriter(fw);
-             PrintWriter pw = new PrintWriter(bw)) {
+        String sql = "INSERT INTO appointments (appointment_number, patient_name, address, " +
+                "contact_number, dentist_name, treatment_type, appointment_date, appointment_time) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
-            // Store fields separated by "|" so we can split them back later
-            String line = appointment.getAppointmentNumber() + "|" +
-                          appointment.getPatient().getPatientName() + "|" +
-                          appointment.getPatient().getAddress() + "|" +
-                          appointment.getPatient().getContactNumber() + "|" +
-                          appointment.getDentistName() + "|" +
-                          appointment.getTreatmentType() + "|" +
-                          appointment.getAppointmentDate() + "|" +
-                          appointment.getAppointmentTime();
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            pw.println(line);
+            ps.setString(1, appointment.getAppointmentNumber());
+            ps.setString(2, appointment.getPatient().getPatientName());
+            ps.setString(3, appointment.getPatient().getAddress());
+            ps.setString(4, appointment.getPatient().getContactNumber());
+            ps.setString(5, appointment.getDentistName());
+            ps.setString(6, appointment.getTreatmentType());
+            ps.setString(7, appointment.getAppointmentDate());
+            ps.setString(8, appointment.getAppointmentTime());
 
-        } catch (IOException e) {
+            ps.executeUpdate();
+
+        } catch (SQLException e) {
             System.out.println("Error saving appointment: " + e.getMessage());
         }
     }
 
-    // Load all appointments from the file into a list
+    // Load all appointments from the database
     public List<Appointment> findAll() {
         List<Appointment> appointments = new ArrayList<>();
-        File file = new File(FILE_NAME);
+        String sql = "SELECT * FROM appointments";
 
-        if (!file.exists()) {
-            return appointments; // empty list if no file yet
-        }
+        try (Connection conn = connect();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
 
-        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                String[] parts = line.split("\\|");
-                if (parts.length == 8) {
-                    Patient patient = new Patient(parts[1], parts[2], parts[3]);
-                    Appointment appt = new Appointment(parts[0], patient, parts[4], parts[5], parts[6], parts[7]);
-                    appointments.add(appt);
-                }
+            while (rs.next()) {
+                Patient patient = new Patient(
+                        rs.getString("patient_name"),
+                        rs.getString("address"),
+                        rs.getString("contact_number"));
+
+                Appointment appt = new Appointment(
+                        rs.getString("appointment_number"),
+                        patient,
+                        rs.getString("dentist_name"),
+                        rs.getString("treatment_type"),
+                        rs.getString("appointment_date"),
+                        rs.getString("appointment_time"));
+
+                appointments.add(appt);
             }
-        } catch (IOException e) {
+
+        } catch (SQLException e) {
             System.out.println("Error reading appointments: " + e.getMessage());
         }
 
@@ -60,23 +103,57 @@ public class AppointmentRepository {
 
     // Find one appointment by its appointment number
     public Appointment findByAppointmentNumber(String appointmentNumber) {
-        for (Appointment a : findAll()) {
-            if (a.getAppointmentNumber().equals(appointmentNumber)) {
-                return a;
+        String sql = "SELECT * FROM appointments WHERE appointment_number = ?";
+
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, appointmentNumber);
+            ResultSet rs = ps.executeQuery();
+
+            if (rs.next()) {
+                Patient patient = new Patient(
+                        rs.getString("patient_name"),
+                        rs.getString("address"),
+                        rs.getString("contact_number"));
+
+                return new Appointment(
+                        rs.getString("appointment_number"),
+                        patient,
+                        rs.getString("dentist_name"),
+                        rs.getString("treatment_type"),
+                        rs.getString("appointment_date"),
+                        rs.getString("appointment_time"));
             }
+
+        } catch (SQLException e) {
+            System.out.println("Error finding appointment: " + e.getMessage());
         }
+
         return null; // not found
     }
 
     // Check whether a dentist already has an appointment at this date/time
     public boolean existsConflict(String dentistName, String date, String time) {
-        for (Appointment a : findAll()) {
-            if (a.getDentistName().equalsIgnoreCase(dentistName) &&
-                a.getAppointmentDate().equals(date) &&
-                a.getAppointmentTime().equals(time)) {
-                return true;
+        String sql = "SELECT COUNT(*) FROM appointments WHERE dentist_name = ? " +
+                "AND appointment_date = ? AND appointment_time = ?";
+
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, dentistName);
+            ps.setString(2, date);
+            ps.setString(3, time);
+            ResultSet rs = ps.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
             }
+
+        } catch (SQLException e) {
+            System.out.println("Error checking conflict: " + e.getMessage());
         }
+
         return false;
     }
 }
